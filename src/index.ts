@@ -5,6 +5,22 @@ import {
   type SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
 
+type UserMessageContent = Parameters<ExtensionAPI["sendUserMessage"]>[0];
+
+/**
+ * A SessionMessageEntry whose message is a user message, with content narrowed
+ * to the sendUserMessage input shape (string | (TextContent | ImageContent)[]).
+ */
+export type UserSessionMessageEntry = Omit<SessionMessageEntry, "message"> & {
+  message: { role: "user"; content: UserMessageContent; timestamp: number };
+};
+
+function isUserMessageEntry(
+  entry: SessionEntry,
+): entry is UserSessionMessageEntry {
+  return entry.type === "message" && entry.message.role === "user";
+}
+
 /**
  * Walk the branch from leaf to root and find the first user message.
  * Non-message entries (model_change, thinking_level_change, custom, label,
@@ -15,9 +31,9 @@ import {
  */
 export function findLastUserMessage(
   entries: SessionEntry[],
-): SessionMessageEntry | null {
+): UserSessionMessageEntry | null {
   for (const entry of entries) {
-    if (entry.type === "message" && entry.message.role === "user") {
+    if (isUserMessageEntry(entry)) {
       return entry;
     }
   }
@@ -30,8 +46,6 @@ export type RegenerateContext = Pick<
   ExtensionCommandContext,
   "isIdle" | "abort" | "waitForIdle" | "sessionManager" | "navigateTree" | "ui"
 >;
-
-type UserMessageContent = Parameters<ExtensionAPI["sendUserMessage"]>[0];
 
 /**
  * Mirrors pi's tree-navigation editor prefill conversion for user messages.
@@ -72,7 +86,7 @@ export async function handleRegenerateCommand(
       return;
     }
 
-    const content = (userEntry.message as { role: "user"; content: UserMessageContent }).content;
+    const content = userEntry.message.content;
     const regeneratedEditorText = extractUserMessageText(content);
     const nav = await ctx.navigateTree(userEntry.id, { summarize: false });
     if (nav.cancelled) {

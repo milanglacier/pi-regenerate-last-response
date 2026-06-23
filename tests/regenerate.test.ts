@@ -183,9 +183,14 @@ function createCommandHarness(
       calls.push(`navigateTree:${targetId}:${JSON.stringify(navOptions)}`);
       await Promise.resolve();
       calls.push("navigateTree:resolved");
-      // Simulate real navigateTree: prefill editor with target entry content
+      // Mirror real navigateTree: only prefill the editor when it is empty.
+      // pi's interactive mode guards prefill with `!this.editor.getText().trim()`.
       const targetEntry = branch.find((e) => e.id === targetId);
-      if (targetEntry?.type === "message" && targetEntry.message.role === "user") {
+      if (
+        targetEntry?.type === "message" &&
+        targetEntry.message.role === "user" &&
+        editorText.trim() === ""
+      ) {
         editorText = targetEntry.message.content as string;
       }
       return { cancelled: options.navCancelled ?? false };
@@ -303,7 +308,7 @@ test("handleRegenerateCommand — clears editor text after regeneration", async 
   assert.equal(getEditorText(), "");
 });
 
-test("handleRegenerateCommand — navigateTree overwrites editor with selected message text", async () => {
+test("handleRegenerateCommand — preserves unrelated editor text", async () => {
   const branch: SessionEntry[] = [
     assistantMsg("e2", "e1"),
     userMsg("e1", null, "hello"),
@@ -314,10 +319,10 @@ test("handleRegenerateCommand — navigateTree overwrites editor with selected m
 
   await handleRegenerateCommand(pi, ctx);
 
-  // navigateTree prefills the editor, which overwrites the draft.
-  // The prefill matches the regenerated prompt, so it gets cleared.
-  assert.ok(calls.includes("setEditorText:"));
-  assert.equal(getEditorText(), "");
+  // navigateTree does not overwrite a non-empty editor, so the draft stays
+  // and does not match the regenerated prompt -> setEditorText is not called.
+  assert.equal(calls.includes("setEditorText:"), false);
+  assert.equal(getEditorText(), "draft note");
 });
 
 test("extractUserMessageText — returns string content as-is", () => {
