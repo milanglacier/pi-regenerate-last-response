@@ -71,12 +71,12 @@ function modelChange(
 // ---- Tests ----
 
 test("findLastUserMessage — normal: user → assistant → user → assistant", () => {
-  // Leaf-to-root order (leaf first)
+  // Root-to-leaf order, matching SessionManager.getBranch().
   const branch: SessionEntry[] = [
-    assistantMsg("e4", "e3"),
-    userMsg("e3", "e2", "second question"),
-    assistantMsg("e2", "e1"),
     userMsg("e1", null, "first question"),
+    assistantMsg("e2", "e1"),
+    userMsg("e3", "e2", "second question"),
+    assistantMsg("e4", "e3"),
   ];
 
   const result = findLastUserMessage(branch);
@@ -88,8 +88,8 @@ test("findLastUserMessage — normal: user → assistant → user → assistant"
 
 test("findLastUserMessage — only one user, leaf is assistant", () => {
   const branch: SessionEntry[] = [
-    assistantMsg("e2", "e1"),
     userMsg("e1", null, "hello"),
+    assistantMsg("e2", "e1"),
   ];
 
   const result = findLastUserMessage(branch);
@@ -99,9 +99,9 @@ test("findLastUserMessage — only one user, leaf is assistant", () => {
 
 test("findLastUserMessage — no user messages (assistant-only)", () => {
   const branch: SessionEntry[] = [
-    assistantMsg("e3", "e2"),
-    assistantMsg("e2", "e1"),
     assistantMsg("e1", null),
+    assistantMsg("e2", "e1"),
+    assistantMsg("e3", "e2"),
   ];
 
   const result = findLastUserMessage(branch);
@@ -116,11 +116,11 @@ test("findLastUserMessage — empty branch", () => {
 test("findLastUserMessage — non-message entries interspersed", () => {
   // user → model_change → assistant → user → assistant
   const branch: SessionEntry[] = [
-    assistantMsg("e5", "e4"),
-    userMsg("e4", "e3", "second question"),
-    assistantMsg("e3", "e2"),
-    modelChange("e2", "e1"),
     userMsg("e1", null, "first question"),
+    modelChange("e2", "e1"),
+    assistantMsg("e3", "e2"),
+    userMsg("e4", "e3", "second question"),
+    assistantMsg("e5", "e4"),
   ];
 
   const result = findLastUserMessage(branch);
@@ -129,16 +129,16 @@ test("findLastUserMessage — non-message entries interspersed", () => {
 });
 
 test("findLastUserMessage — two consecutive user messages (unusual)", () => {
-  // user-1 → user-2 → assistant → leaf
+  // user-1 → user-2 → assistant leaf
   const branch: SessionEntry[] = [
-    assistantMsg("e3", "e2"),
-    userMsg("e2", "e1", "follow-up"),
     userMsg("e1", null, "initial"),
+    userMsg("e2", "e1", "follow-up"),
+    assistantMsg("e3", "e2"),
   ];
 
   const result = findLastUserMessage(branch);
   assert.ok(result);
-  // Returns e2 (first user from leaf)
+  // Returns e2 (user closest to the leaf)
   assert.equal(result.id, "e2");
 });
 
@@ -218,10 +218,10 @@ function createCommandHarness(
 
 test("handleRegenerateCommand — idle normal case uses navigateTree then sends prompt", async () => {
   const branch: SessionEntry[] = [
-    assistantMsg("e4", "e3"),
-    userMsg("e3", "e2", "second question"),
-    assistantMsg("e2", "e1"),
     userMsg("e1", null, "first question"),
+    assistantMsg("e2", "e1"),
+    userMsg("e3", "e2", "second question"),
+    assistantMsg("e4", "e3"),
   ];
   const { pi, ctx, calls, sentMessages } = createCommandHarness(branch);
 
@@ -237,8 +237,8 @@ test("handleRegenerateCommand — idle normal case uses navigateTree then sends 
 
 test("handleRegenerateCommand — root user case still uses navigateTree", async () => {
   const branch: SessionEntry[] = [
-    assistantMsg("e2", "e1"),
     userMsg("e1", null, "hello"),
+    assistantMsg("e2", "e1"),
   ];
   const { pi, ctx, calls, sentMessages } = createCommandHarness(branch);
 
@@ -250,8 +250,8 @@ test("handleRegenerateCommand — root user case still uses navigateTree", async
 
 test("handleRegenerateCommand — cancellation does not resend prompt", async () => {
   const branch: SessionEntry[] = [
-    assistantMsg("e2", "e1"),
     userMsg("e1", null, "hello"),
+    assistantMsg("e2", "e1"),
   ];
   const { pi, ctx, calls, sentMessages, notifications } = createCommandHarness(
     branch,
@@ -270,8 +270,8 @@ test("handleRegenerateCommand — cancellation does not resend prompt", async ()
 
 test("handleRegenerateCommand — running agent aborts and waits before navigation", async () => {
   const branch: SessionEntry[] = [
-    assistantMsg("e2", "e1"),
     userMsg("e1", null, "hello"),
+    assistantMsg("e2", "e1"),
   ];
   const { pi, ctx, calls } = createCommandHarness(branch, { idle: false });
 
@@ -297,8 +297,8 @@ test("handleRegenerateCommand — leaf-is-user guard avoids navigation and send"
 
 test("handleRegenerateCommand — clears editor text after regeneration", async () => {
   const branch: SessionEntry[] = [
-    assistantMsg("e2", "e1"),
     userMsg("e1", null, "hello"),
+    assistantMsg("e2", "e1"),
   ];
   const { pi, ctx, calls, getEditorText } = createCommandHarness(branch);
 
@@ -310,8 +310,8 @@ test("handleRegenerateCommand — clears editor text after regeneration", async 
 
 test("handleRegenerateCommand — preserves unrelated editor text", async () => {
   const branch: SessionEntry[] = [
-    assistantMsg("e2", "e1"),
     userMsg("e1", null, "hello"),
+    assistantMsg("e2", "e1"),
   ];
   const { pi, ctx, calls, getEditorText } = createCommandHarness(branch, {
     editorText: "draft note",

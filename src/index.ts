@@ -23,16 +23,19 @@ function isUserMessageEntry(
 
 /**
  * Walk the branch from leaf to root and find the first user message.
- * Non-message entries (model_change, thinking_level_change, custom, label,
- * compaction, branch_summary, session_info) are skipped.
+ * pi's sessionManager.getBranch() returns entries in root-to-leaf order, so
+ * scan backward from the leaf. Non-message entries (model_change,
+ * thinking_level_change, custom, label, compaction, branch_summary,
+ * session_info) are skipped.
  *
- * @param entries - Branch entries in leaf-to-root order (index 0 = leaf)
- * @returns The first user message entry found, or null if none
+ * @param entries - Branch entries in root-to-leaf order (last index = leaf)
+ * @returns The user message closest to the leaf, or null if none
  */
 export function findLastUserMessage(
   entries: SessionEntry[],
 ): UserSessionMessageEntry | null {
-  for (const entry of entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
     if (isUserMessageEntry(entry)) {
       return entry;
     }
@@ -73,7 +76,7 @@ export async function handleRegenerateCommand(
     }
 
     const branch = ctx.sessionManager.getBranch();
-    const leaf = branch[0]; // index 0 = leaf
+    const leaf = branch[branch.length - 1]; // last index = leaf
 
     const userEntry = findLastUserMessage(branch);
     if (!userEntry) {
