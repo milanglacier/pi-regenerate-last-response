@@ -24,9 +24,9 @@ export function findLastUserMessage(
   return null;
 }
 
-type RegeneratePI = Pick<ExtensionAPI, "sendUserMessage">;
+export type RegeneratePI = Pick<ExtensionAPI, "sendUserMessage">;
 
-type RegenerateContext = Pick<
+export type RegenerateContext = Pick<
   ExtensionCommandContext,
   "isIdle" | "abort" | "waitForIdle" | "sessionManager" | "navigateTree" | "ui"
 >;
@@ -72,20 +72,15 @@ export async function handleRegenerateCommand(
       return;
     }
 
-    const message = userEntry.message;
-    if (message.role !== "user") {
-      ctx.ui.notify("Nothing to regenerate", "info");
-      return;
-    }
-
-    const regeneratedEditorText = extractUserMessageText(message.content);
+    const content = (userEntry.message as { role: "user"; content: UserMessageContent }).content;
+    const regeneratedEditorText = extractUserMessageText(content);
     const nav = await ctx.navigateTree(userEntry.id, { summarize: false });
     if (nav.cancelled) {
       ctx.ui.notify("Regeneration cancelled", "info");
       return;
     }
 
-    pi.sendUserMessage(message.content);
+    pi.sendUserMessage(content);
 
     if (ctx.ui.getEditorText() === regeneratedEditorText) {
       ctx.ui.setEditorText("");

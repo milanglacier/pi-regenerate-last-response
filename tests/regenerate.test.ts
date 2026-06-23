@@ -4,6 +4,8 @@ import {
   extractUserMessageText,
   findLastUserMessage,
   handleRegenerateCommand,
+  type RegeneratePI,
+  type RegenerateContext,
 } from "../src/index.ts";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
@@ -146,7 +148,6 @@ function createCommandHarness(
     idle?: boolean;
     navCancelled?: boolean;
     editorText?: string;
-    prefillEditorOnNavigate?: string;
   } = {},
 ) {
   const calls: string[] = [];
@@ -154,8 +155,8 @@ function createCommandHarness(
   const notifications: Array<{ message: string; level: string }> = [];
   let editorText = options.editorText ?? "";
 
-  const pi = {
-    sendUserMessage(content: unknown) {
+  const pi: RegeneratePI = {
+    sendUserMessage(content) {
       calls.push("sendUserMessage");
       sentMessages.push(content);
     },
@@ -182,8 +183,10 @@ function createCommandHarness(
       calls.push(`navigateTree:${targetId}:${JSON.stringify(navOptions)}`);
       await Promise.resolve();
       calls.push("navigateTree:resolved");
-      if (options.prefillEditorOnNavigate !== undefined) {
-        editorText = options.prefillEditorOnNavigate;
+      // Simulate real navigateTree: prefill editor with target entry content
+      const targetEntry = branch.find((e) => e.id === targetId);
+      if (targetEntry?.type === "message" && targetEntry.message.role === "user") {
+        editorText = targetEntry.message.content as string;
       }
       return { cancelled: options.navCancelled ?? false };
     },
@@ -201,7 +204,7 @@ function createCommandHarness(
         editorText = text;
       },
     },
-  };
+  } as RegenerateContext;
 
   return { pi, ctx, calls, sentMessages, notifications, getEditorText: () => editorText };
 }
@@ -217,7 +220,7 @@ test("handleRegenerateCommand — idle normal case uses navigateTree then sends 
   ];
   const { pi, ctx, calls, sentMessages } = createCommandHarness(branch);
 
-  await handleRegenerateCommand(pi as any, ctx as any);
+  await handleRegenerateCommand(pi, ctx);
 
   assert.ok(calls.includes('navigateTree:e3:{"summarize":false}'));
   assert.deepEqual(sentMessages, ["second question"]);
@@ -234,7 +237,7 @@ test("handleRegenerateCommand — root user case still uses navigateTree", async
   ];
   const { pi, ctx, calls, sentMessages } = createCommandHarness(branch);
 
-  await handleRegenerateCommand(pi as any, ctx as any);
+  await handleRegenerateCommand(pi, ctx);
 
   assert.ok(calls.includes('navigateTree:e1:{"summarize":false}'));
   assert.deepEqual(sentMessages, ["hello"]);
@@ -250,7 +253,7 @@ test("handleRegenerateCommand — cancellation does not resend prompt", async ()
     { navCancelled: true },
   );
 
-  await handleRegenerateCommand(pi as any, ctx as any);
+  await handleRegenerateCommand(pi, ctx);
 
   assert.ok(calls.includes('navigateTree:e1:{"summarize":false}'));
   assert.deepEqual(sentMessages, []);
@@ -267,7 +270,7 @@ test("handleRegenerateCommand — running agent aborts and waits before navigati
   ];
   const { pi, ctx, calls } = createCommandHarness(branch, { idle: false });
 
-  await handleRegenerateCommand(pi as any, ctx as any);
+  await handleRegenerateCommand(pi, ctx);
 
   assert.ok(calls.indexOf("abort") < calls.indexOf("waitForIdle"));
   assert.ok(calls.indexOf("waitForIdle") < calls.findIndex((c) => c.startsWith("navigateTree:")));
@@ -277,7 +280,7 @@ test("handleRegenerateCommand — leaf-is-user guard avoids navigation and send"
   const branch: SessionEntry[] = [userMsg("e1", null, "hello")];
   const { pi, ctx, calls, sentMessages, notifications } = createCommandHarness(branch);
 
-  await handleRegenerateCommand(pi as any, ctx as any);
+  await handleRegenerateCommand(pi, ctx);
 
   assert.equal(calls.some((c) => c.startsWith("navigateTree:")), false);
   assert.deepEqual(sentMessages, []);
@@ -287,22 +290,20 @@ test("handleRegenerateCommand — leaf-is-user guard avoids navigation and send"
   });
 });
 
-test("handleRegenerateCommand — clears only navigateTree-prefilled editor text", async () => {
+test("handleRegenerateCommand — clears editor text after regeneration", async () => {
   const branch: SessionEntry[] = [
     assistantMsg("e2", "e1"),
     userMsg("e1", null, "hello"),
   ];
-  const { pi, ctx, calls, getEditorText } = createCommandHarness(branch, {
-    prefillEditorOnNavigate: "hello",
-  });
+  const { pi, ctx, calls, getEditorText } = createCommandHarness(branch);
 
-  await handleRegenerateCommand(pi as any, ctx as any);
+  await handleRegenerateCommand(pi, ctx);
 
   assert.ok(calls.includes("setEditorText:"));
   assert.equal(getEditorText(), "");
 });
 
-test("handleRegenerateCommand — preserves unrelated editor text", async () => {
+test("handleRegenerateCommand — navigateTree overwrites editor with selected message text", async () => {
   const branch: SessionEntry[] = [
     assistantMsg("e2", "e1"),
     userMsg("e1", null, "hello"),
@@ -311,10 +312,17 @@ test("handleRegenerateCommand — preserves unrelated editor text", async () => 
     editorText: "draft note",
   });
 
-  await handleRegenerateCommand(pi as any, ctx as any);
+  await handleRegenerateCommand(pi, ctx);
 
-  assert.equal(calls.includes("setEditorText:"), false);
-  assert.equal(getEditorText(), "draft note");
+  // navigateTree prefills the editor, which overwrites the draft.
+  // The prefill matches the regenerated prompt, so it gets cleared.
+  assert.ok(calls.includes("setEditorText:"));
+  assert.equal(getEditorText(), "");
+});
+
+test("extractUserMessageText — returns string content as-is", () => {
+  const result = extractUserMessageText("hello world");
+  assert.equal(result, "hello world");
 });
 
 test("extractUserMessageText — joins text parts and ignores image parts", () => {
