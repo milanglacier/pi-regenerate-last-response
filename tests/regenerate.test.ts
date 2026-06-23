@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findLastUserMessage } from "../src/index.ts";
+import {
+  extractUserMessageText,
+  findLastUserMessage,
+  handleRegenerateCommand,
+} from "../src/index.ts";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -134,4 +138,191 @@ test("findLastUserMessage — two consecutive user messages (unusual)", () => {
   assert.ok(result);
   // Returns e2 (first user from leaf)
   assert.equal(result.id, "e2");
+});
+
+function createCommandHarness(
+  branch: SessionEntry[],
+  options: {
+    idle?: boolean;
+    navCancelled?: boolean;
+    editorText?: string;
+    prefillEditorOnNavigate?: string;
+  } = {},
+) {
+  const calls: string[] = [];
+  const sentMessages: unknown[] = [];
+  const notifications: Array<{ message: string; level: string }> = [];
+  let editorText = options.editorText ?? "";
+
+  const pi = {
+    sendUserMessage(content: unknown) {
+      calls.push("sendUserMessage");
+      sentMessages.push(content);
+    },
+  };
+
+  const ctx = {
+    isIdle() {
+      calls.push("isIdle");
+      return options.idle ?? true;
+    },
+    abort() {
+      calls.push("abort");
+    },
+    async waitForIdle() {
+      calls.push("waitForIdle");
+    },
+    sessionManager: {
+      getBranch() {
+        calls.push("getBranch");
+        return branch;
+      },
+    },
+    async navigateTree(targetId: string, navOptions: unknown) {
+      calls.push(`navigateTree:${targetId}:${JSON.stringify(navOptions)}`);
+      await Promise.resolve();
+      calls.push("navigateTree:resolved");
+      if (options.prefillEditorOnNavigate !== undefined) {
+        editorText = options.prefillEditorOnNavigate;
+      }
+      return { cancelled: options.navCancelled ?? false };
+    },
+    ui: {
+      notify(message: string, level: string) {
+        calls.push(`notify:${message}:${level}`);
+        notifications.push({ message, level });
+      },
+      getEditorText() {
+        calls.push("getEditorText");
+        return editorText;
+      },
+      setEditorText(text: string) {
+        calls.push(`setEditorText:${text}`);
+        editorText = text;
+      },
+    },
+  };
+
+  return { pi, ctx, calls, sentMessages, notifications, getEditorText: () => editorText };
+}
+
+// ---- Command handler tests ----
+
+test("handleRegenerateCommand — idle normal case uses navigateTree then sends prompt", async () => {
+  const branch: SessionEntry[] = [
+    assistantMsg("e4", "e3"),
+    userMsg("e3", "e2", "second question"),
+    assistantMsg("e2", "e1"),
+    userMsg("e1", null, "first question"),
+  ];
+  const { pi, ctx, calls, sentMessages } = createCommandHarness(branch);
+
+  await handleRegenerateCommand(pi as any, ctx as any);
+
+  assert.ok(calls.includes('navigateTree:e3:{"summarize":false}'));
+  assert.deepEqual(sentMessages, ["second question"]);
+  assert.ok(
+    calls.indexOf("navigateTree:resolved") < calls.indexOf("sendUserMessage"),
+    "sendUserMessage should run after navigateTree has resolved",
+  );
+});
+
+test("handleRegenerateCommand — root user case still uses navigateTree", async () => {
+  const branch: SessionEntry[] = [
+    assistantMsg("e2", "e1"),
+    userMsg("e1", null, "hello"),
+  ];
+  const { pi, ctx, calls, sentMessages } = createCommandHarness(branch);
+
+  await handleRegenerateCommand(pi as any, ctx as any);
+
+  assert.ok(calls.includes('navigateTree:e1:{"summarize":false}'));
+  assert.deepEqual(sentMessages, ["hello"]);
+});
+
+test("handleRegenerateCommand — cancellation does not resend prompt", async () => {
+  const branch: SessionEntry[] = [
+    assistantMsg("e2", "e1"),
+    userMsg("e1", null, "hello"),
+  ];
+  const { pi, ctx, calls, sentMessages, notifications } = createCommandHarness(
+    branch,
+    { navCancelled: true },
+  );
+
+  await handleRegenerateCommand(pi as any, ctx as any);
+
+  assert.ok(calls.includes('navigateTree:e1:{"summarize":false}'));
+  assert.deepEqual(sentMessages, []);
+  assert.deepEqual(notifications.at(-1), {
+    message: "Regeneration cancelled",
+    level: "info",
+  });
+});
+
+test("handleRegenerateCommand — running agent aborts and waits before navigation", async () => {
+  const branch: SessionEntry[] = [
+    assistantMsg("e2", "e1"),
+    userMsg("e1", null, "hello"),
+  ];
+  const { pi, ctx, calls } = createCommandHarness(branch, { idle: false });
+
+  await handleRegenerateCommand(pi as any, ctx as any);
+
+  assert.ok(calls.indexOf("abort") < calls.indexOf("waitForIdle"));
+  assert.ok(calls.indexOf("waitForIdle") < calls.findIndex((c) => c.startsWith("navigateTree:")));
+});
+
+test("handleRegenerateCommand — leaf-is-user guard avoids navigation and send", async () => {
+  const branch: SessionEntry[] = [userMsg("e1", null, "hello")];
+  const { pi, ctx, calls, sentMessages, notifications } = createCommandHarness(branch);
+
+  await handleRegenerateCommand(pi as any, ctx as any);
+
+  assert.equal(calls.some((c) => c.startsWith("navigateTree:")), false);
+  assert.deepEqual(sentMessages, []);
+  assert.deepEqual(notifications.at(-1), {
+    message: "No agent response to regenerate",
+    level: "info",
+  });
+});
+
+test("handleRegenerateCommand — clears only navigateTree-prefilled editor text", async () => {
+  const branch: SessionEntry[] = [
+    assistantMsg("e2", "e1"),
+    userMsg("e1", null, "hello"),
+  ];
+  const { pi, ctx, calls, getEditorText } = createCommandHarness(branch, {
+    prefillEditorOnNavigate: "hello",
+  });
+
+  await handleRegenerateCommand(pi as any, ctx as any);
+
+  assert.ok(calls.includes("setEditorText:"));
+  assert.equal(getEditorText(), "");
+});
+
+test("handleRegenerateCommand — preserves unrelated editor text", async () => {
+  const branch: SessionEntry[] = [
+    assistantMsg("e2", "e1"),
+    userMsg("e1", null, "hello"),
+  ];
+  const { pi, ctx, calls, getEditorText } = createCommandHarness(branch, {
+    editorText: "draft note",
+  });
+
+  await handleRegenerateCommand(pi as any, ctx as any);
+
+  assert.equal(calls.includes("setEditorText:"), false);
+  assert.equal(getEditorText(), "draft note");
+});
+
+test("extractUserMessageText — joins text parts and ignores image parts", () => {
+  const result = extractUserMessageText([
+    { type: "text", text: "hello " },
+    { type: "image", image: "base64", mediaType: "image/png" } as any,
+    { type: "text", text: "world" },
+  ]);
+
+  assert.equal(result, "hello world");
 });

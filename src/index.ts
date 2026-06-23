@@ -1,5 +1,4 @@
 import {
-  SessionManager,
   type ExtensionAPI,
   type ExtensionCommandContext,
   type SessionEntry,
@@ -25,56 +24,88 @@ export function findLastUserMessage(
   return null;
 }
 
+type RegeneratePI = Pick<ExtensionAPI, "sendUserMessage">;
+
+type RegenerateContext = Pick<
+  ExtensionCommandContext,
+  "isIdle" | "abort" | "waitForIdle" | "sessionManager" | "navigateTree" | "ui"
+>;
+
+type UserMessageContent = Parameters<ExtensionAPI["sendUserMessage"]>[0];
+
+/**
+ * Mirrors pi's tree-navigation editor prefill conversion for user messages.
+ * Image parts have no editable text representation, so only text parts are used.
+ */
+export function extractUserMessageText(content: UserMessageContent): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+}
+
+export async function handleRegenerateCommand(
+  pi: RegeneratePI,
+  ctx: RegenerateContext,
+): Promise<void> {
+  try {
+    if (!ctx.isIdle()) {
+      ctx.abort();
+      await ctx.waitForIdle();
+    }
+
+    const branch = ctx.sessionManager.getBranch();
+    const leaf = branch[0]; // index 0 = leaf
+
+    const userEntry = findLastUserMessage(branch);
+    if (!userEntry) {
+      ctx.ui.notify("Nothing to regenerate", "info");
+      return;
+    }
+
+    if (userEntry.id === leaf?.id) {
+      ctx.ui.notify("No agent response to regenerate", "info");
+      return;
+    }
+
+    const message = userEntry.message;
+    if (message.role !== "user") {
+      ctx.ui.notify("Nothing to regenerate", "info");
+      return;
+    }
+
+    const regeneratedEditorText = extractUserMessageText(message.content);
+    const nav = await ctx.navigateTree(userEntry.id, { summarize: false });
+    if (nav.cancelled) {
+      ctx.ui.notify("Regeneration cancelled", "info");
+      return;
+    }
+
+    pi.sendUserMessage(message.content);
+
+    if (ctx.ui.getEditorText() === regeneratedEditorText) {
+      ctx.ui.setEditorText("");
+    }
+
+    ctx.ui.notify("Regenerating last response...", "info");
+  } catch (error) {
+    ctx.ui.notify(
+      error instanceof Error ? error.message : String(error),
+      "error",
+    );
+  }
+}
+
 export default function regenerateExtension(pi: ExtensionAPI) {
   async function handleRegenerate(
     _args: string,
     ctx: ExtensionCommandContext,
   ) {
-    try {
-      // Path B: abort if agent is running
-      if (!ctx.isIdle()) {
-        ctx.abort();
-        await ctx.waitForIdle();
-      }
-
-      const branch = ctx.sessionManager.getBranch();
-      const leaf = branch[0]; // index 0 = leaf
-
-      const userEntry = findLastUserMessage(branch);
-      if (!userEntry) {
-        ctx.ui.notify("Nothing to regenerate", "info");
-        return;
-      }
-
-      if (userEntry.id === leaf?.id) {
-        ctx.ui.notify("No agent response to regenerate", "info");
-        return;
-      }
-
-      // Access the full SessionManager to rewind the leaf pointer.
-      // ReadonlySessionManager omits branch() / resetLeaf(), but the runtime
-      // object is the full SessionManager.
-      const sm = ctx.sessionManager as unknown as SessionManager;
-
-      if (userEntry.parentId === null) {
-        sm.resetLeaf();
-      } else {
-        sm.branch(userEntry.parentId);
-      }
-
-      const message = userEntry.message;
-      if (message.role !== "user") {
-        ctx.ui.notify("Nothing to regenerate", "info");
-        return;
-      }
-      pi.sendUserMessage(message.content);
-      ctx.ui.notify("Regenerating last response...", "info");
-    } catch (error) {
-      ctx.ui.notify(
-        error instanceof Error ? error.message : String(error),
-        "error",
-      );
-    }
+    await handleRegenerateCommand(pi, ctx);
   }
 
   pi.registerCommand("regenerate", {
