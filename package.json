@@ -1,7 +1,7 @@
 {
   "name": "pi-regenerate-last-response",
   "version": "0.1.0",
-  "description": "A pi extension that adds /regenerate and /reg slash commands to regenerate the last agent response.",
+  "description": "A pi extension for regenerating or clearing the latest assistant response.",
   "type": "module",
   "license": "MIT",
   "author": "Milan Glacier",
