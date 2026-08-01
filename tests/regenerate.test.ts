@@ -6,7 +6,7 @@ import {
   handleRegenerateCommand,
   type RegeneratePI,
   type RegenerateContext,
-} from "../src/index.ts";
+} from "../src/regenerate.ts";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
 /**

@@ -1,8 +1,6 @@
 # pi-regenerate-last-response
 
-A standard [pi](https://pi.dev) package that adds `/regenerate` and `/reg` slash commands.
-
-`/regenerate` regenerates the last agent response by branching back to the preceding user message and re-triggering the agent.
+A standard [pi](https://pi.dev) package providing response regeneration and provider-safe output-text-only history controls.
 
 ## Install
 
@@ -12,43 +10,65 @@ From npm after publishing:
 pi install npm:pi-regenerate-last-response
 ```
 
-Or install via GitHub:
+Or from GitHub/local source:
 
 ```bash
 pi install github:milanglacier/pi-regenerate-last-response
-```
-
-For local development:
-
-```bash
 pi install /absolute/path/to/pi-regenerate-last-response
-# or try it for one run
+# try it for one run
 pi -e /absolute/path/to/pi-regenerate-last-response/src/index.ts
 ```
 
-## Usage
+## Regenerate
+
+Use `/regenerate` or its `/reg` shorthand. The command finds the most recent user message, navigates back to it, and resends it so pi generates a fresh response on a new branch.
+
+## Keep only output text (KOOT)
 
 ```text
-/regenerate
+/keep-only-output-text-from-last-turn [on|off]
+/koot [on|off]
 ```
 
-Or the shorthand:
+The argument may be `on`, `off`, or omitted to toggle the mode. Enabling KOOT arms the next top-level prompt boundary:
 
 ```text
-/reg
+user-1 → complete assistant/tool response-1 → /koot on → user-2
 ```
 
-The command regenerates the last agent response by finding the most recent user message, branching to its parent, and re-sending the user message to the agent. A fresh response is generated on a new branch.
+Future provider context represents that boundary as:
+
+```text
+user-1 → one assistant message containing response-1 output text → user-2
+```
+
+All assistant text blocks are retained in order. Thinking, tool calls, and their matching tool results are omitted from future provider requests. The response currently being generated is never filtered during its own tool loop; it can only be marked when a later top-level prompt begins. Slash commands, steering, and queued follow-ups do not mark a response.
+
+KOOT is non-destructive: persisted session messages, TUI history, tool history, and usage totals remain unchanged. Mode changes and response markers are persistent and branch-aware. Turning KOOT off prevents new marks but does not restore traces from responses already marked for provider context. If information existed only in removed thinking or tool output, later model requests will no longer receive it.
 
 ## Development
 
-```bash
-npm run check
+The TypeScript source is loaded directly by pi:
+
+```text
+src/
+├── index.ts       # composition-only package entrypoint
+├── regenerate.ts  # /regenerate and /reg
+└── koot.ts        # output-text-only commands and lifecycle hooks
+
+tests/
+├── regenerate.test.ts
+└── koot.test.ts
 ```
 
-## Package manifest
+Run all checks with:
 
-This package declares the extension in `package.json`:
+```bash
+npm run check
+npm run pack:dry-run
+```
+
+The package manifest intentionally points to the TypeScript entrypoint:
 
 ```json
 {
