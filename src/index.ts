@@ -5,14 +5,12 @@ import {
   type SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
 
-type UserMessageContent = Parameters<ExtensionAPI["sendUserMessage"]>[0];
+type UserMessage = Extract<SessionMessageEntry["message"], { role: "user" }>;
+type UserMessageContent = UserMessage["content"];
 
-/**
- * A SessionMessageEntry whose message is a user message, with content narrowed
- * to the sendUserMessage input shape (string | (TextContent | ImageContent)[]).
- */
+/** A SessionMessageEntry narrowed to the real upstream user-message type. */
 export type UserSessionMessageEntry = Omit<SessionMessageEntry, "message"> & {
-  message: { role: "user"; content: UserMessageContent; timestamp: number };
+  message: UserMessage;
 };
 
 function isUserMessageEntry(
