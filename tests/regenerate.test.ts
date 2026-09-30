@@ -9,10 +9,7 @@ import {
 } from "../src/index.ts";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
-/**
- * Minimal mock helpers that construct just enough shape to satisfy
- * findLastUserMessage without pulling in the full AgentMessage type.
- */
+/** Session fixtures use the installed Pi message declarations. */
 
 function userMsg(
   id: string,
@@ -29,7 +26,7 @@ function userMsg(
       content,
       timestamp: Date.now(),
     },
-  } as SessionEntry;
+  };
 }
 
 function assistantMsg(
@@ -44,14 +41,17 @@ function assistantMsg(
     message: {
       role: "assistant",
       content: [{ type: "text", text: "response" }],
-      api: "anthropic" as any,
+      api: "anthropic-messages",
       provider: "anthropic",
       model: "claude-sonnet-4-5",
-      usage: {} as any,
+      usage: {
+        input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
       stopReason: "stop",
       timestamp: Date.now(),
     },
-  } as SessionEntry;
+  };
 }
 
 function modelChange(
@@ -65,7 +65,7 @@ function modelChange(
     timestamp: new Date().toISOString(),
     provider: "openai",
     modelId: "gpt-4o",
-  } as SessionEntry;
+  };
 }
 
 // ---- Tests ----
@@ -178,8 +178,8 @@ function createCommandHarness(
         calls.push("getBranch");
         return branch;
       },
-    },
-    async navigateTree(targetId: string, navOptions: unknown) {
+    } satisfies Pick<RegenerateContext["sessionManager"], "getBranch">,
+    async navigateTree(targetId: string, navOptions: Parameters<RegenerateContext["navigateTree"]>[1]) {
       calls.push(`navigateTree:${targetId}:${JSON.stringify(navOptions)}`);
       await Promise.resolve();
       calls.push("navigateTree:resolved");
@@ -191,12 +191,12 @@ function createCommandHarness(
         targetEntry.message.role === "user" &&
         editorText.trim() === ""
       ) {
-        editorText = targetEntry.message.content as string;
+        editorText = extractUserMessageText(targetEntry.message.content);
       }
       return { cancelled: options.navCancelled ?? false };
     },
     ui: {
-      notify(message: string, level: string) {
+      notify(message: string, level = "info") {
         calls.push(`notify:${message}:${level}`);
         notifications.push({ message, level });
       },
@@ -208,10 +208,14 @@ function createCommandHarness(
         calls.push(`setEditorText:${text}`);
         editorText = text;
       },
-    },
-  } as RegenerateContext;
+    } satisfies Pick<RegenerateContext["ui"], "notify" | "getEditorText" | "setEditorText">,
+  } satisfies Omit<RegenerateContext, "sessionManager" | "ui"> & {
+    sessionManager: Pick<RegenerateContext["sessionManager"], "getBranch">;
+    ui: Pick<RegenerateContext["ui"], "notify" | "getEditorText" | "setEditorText">;
+  };
 
-  return { pi, ctx, calls, sentMessages, notifications, getEditorText: () => editorText };
+  // The harness supplies only the validated methods exercised by this command.
+  return { pi, ctx: ctx as RegenerateContext, calls, sentMessages, notifications, getEditorText: () => editorText };
 }
 
 // ---- Command handler tests ----
@@ -333,7 +337,7 @@ test("extractUserMessageText — returns string content as-is", () => {
 test("extractUserMessageText — joins text parts and ignores image parts", () => {
   const result = extractUserMessageText([
     { type: "text", text: "hello " },
-    { type: "image", image: "base64", mediaType: "image/png" } as any,
+    { type: "image", data: "base64", mimeType: "image/png" },
     { type: "text", text: "world" },
   ]);
 
